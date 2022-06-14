@@ -29,8 +29,8 @@ float roll_prev_err = 0, pitch_prev_err = 0, yaw_prev_err = 0;
 float roll_err_int = 0, pitch_err_int = 0, yaw_err_int = 0;
 float roll_err_deriv = 0, pitch_err_deriv = 0, yaw_err_deriv = 0;
 
-float r_p = 1, r_i = 0, r_d = 0;      // PID - Roll
-float p_p = 1, p_i = 0, p_d = 0;      // PID - Pitch
+float r_p = 2.4, r_i = 0, r_d = 0;      // PID - Roll
+float p_p = 2.4, p_i = 0, p_d = 0;      // PID - Pitch
 float y_p = 0, y_i = 0, y_d = 0;      // PI - Yaw
 
 // RC receiver variables.
@@ -61,6 +61,8 @@ IntervalTimer modeTimer;
 IntervalTimer logTimer;
 
 void logToConsole(){
+  Serial.print(r_p);
+  Serial.print(", ");
   Serial.print(veh_roll);
   Serial.print(", ");
   Serial.print(veh_pitch);
@@ -124,6 +126,14 @@ void setup(void) {
   
       delay(2000);
   }  
+
+  // Initialize gyro angles to accelerometer readings in the beginning.
+  bmi088.getAcceleration(&ax, &ay, &az);  // g/s^2 
+  float acc_tot_vect = sqrt((ax*ax) + (ay*ay) + (az*az));
+  acc_roll = asin(ay/acc_tot_vect) * (180.0 /3.142);
+  acc_pitch = asin(ax/acc_tot_vect) * (180.0 /3.142);
+  gyro_roll = acc_roll;
+  gyro_pitch = acc_pitch;
 }
 
 void loop(void) {
