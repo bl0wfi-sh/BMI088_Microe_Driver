@@ -32,16 +32,35 @@
 BMI088::BMI088(void) {
     devAddrAcc = BMI088_ACC_ADDRESS;
     devAddrGyro = BMI088_GYRO_ADDRESS;
+    gcal_x = 0;
+    gcal_y = 0;
+    gcal_z = 0;
 }
 
 void BMI088::initialize(void) {
-    setAccScaleRange(RANGE_6G);
-    setAccOutputDataRate(ODR_100);
+    setAccScaleRange(RANGE_24G);
+    setAccOutputDataRate(ODR_200);
     setAccPoweMode(ACC_ACTIVE);
 
     setGyroScaleRange(RANGE_2000);
     setGyroOutputDataRate(ODR_200_BW_23);
     setGyroPoweMode(GYRO_NORMAL);
+
+    calibrateGyro(5000);
+}
+
+void BMI088::calibrateGyro(int count){
+    float x_tot = 0, y_tot = 0, z_tot = 0;
+    for(int i = 0; i < count; i++){
+      float gx, gy, gz;
+      getGyroscope(&gx, &gy, &gz);
+      x_tot += gx;
+      y_tot += gy;
+      z_tot += gz;
+    }
+    gcal_x = x_tot / count;
+    gcal_y = y_tot / count;
+    gcal_z = z_tot / count;
 }
 
 bool BMI088::isConnection(void) {
@@ -197,13 +216,13 @@ void BMI088::getGyroscope(float* x, float* y, float* z) {
     gz = buf[4] | (buf[5] << 8);
 
     value = (int16_t)gx;
-    *x = gyroRange * value / 32768;
+    *x = (gyroRange * value / 32768) - gcal_x;
 
     value = (int16_t)gy;
-    *y = gyroRange * value / 32768;
+    *y = (gyroRange * value / 32768) - gcal_y;
 
     value = (int16_t)gz;
-    *z = gyroRange * value / 32768;
+    *z = (gyroRange * value / 32768) - gcal_z;
 }
 
 float BMI088::getGyroscopeX(void) {
@@ -213,7 +232,7 @@ float BMI088::getGyroscopeX(void) {
     gx = read16(GYRO, BMI088_GYRO_RATE_X_LSB);
 
     value = (int16_t)gx;
-    value = gyroRange * value / 32768;
+    value = (gyroRange * value / 32768) - gcal_x;
 
     return value;
 }
@@ -225,7 +244,7 @@ float BMI088::getGyroscopeY(void) {
     gy = read16(GYRO, BMI088_GYRO_RATE_Y_LSB);
 
     value = (int16_t)gy;
-    value = gyroRange * value / 32768;
+    value = (gyroRange * value / 32768) - gcal_y;
 
     return value;
 }
@@ -237,7 +256,7 @@ float BMI088::getGyroscopeZ(void) {
     gz = read16(GYRO, BMI088_GYRO_RATE_Z_LSB);
 
     value = (int16_t)gz;
-    value = gyroRange * value / 32768;
+    value = (gyroRange * value / 32768) - gcal_z;
 
     return value;
 }

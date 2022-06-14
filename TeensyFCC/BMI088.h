@@ -30,7 +30,7 @@
 #ifndef __BOSCH_BMI088_H__
 #define __BOSCH_BMI088_H__
 
-//#include <Arduino.h>
+#include <Arduino.h>
 #include <Wire.h>
 
 #define BMI088_ACC_ADDRESS          0x18
@@ -184,6 +184,8 @@ class BMI088 {
     void resetAcc(void);
     void resetGyro(void);
 
+    void calibrateGyro(int count);
+
   private:
 
     void write8(device_type_t dev, uint8_t reg, uint8_t val);
@@ -197,6 +199,10 @@ class BMI088 {
     float gyroRange;
     uint8_t devAddrAcc;
     uint8_t devAddrGyro;
+    float gcal_x;
+    float gcal_y;
+    float gcal_z;
+
 };
 
 extern BMI088 bmi088;
