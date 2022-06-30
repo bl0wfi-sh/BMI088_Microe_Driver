@@ -8,8 +8,8 @@
 #define FRM   4
 #define BRM   5
 #define BLM   6
-#define MIN_MOTOR_MS_VAL 1100       // At this value motors start spinning!
-#define MAX_MOTOR_MS_VAL 1900
+#define MIN_MOTOR_MS_VAL 1150       // At this value motors start spinning!
+#define MAX_MOTOR_MS_VAL 1950
 Servo FrontLeft, FrontRight, BackLeft, BackRight;
 
 // IMU variables
@@ -29,8 +29,8 @@ float roll_prev_err = 0, pitch_prev_err = 0, yaw_prev_err = 0;
 float roll_err_int = 0, pitch_err_int = 0, yaw_err_int = 0;
 float roll_err_deriv = 0, pitch_err_deriv = 0, yaw_err_deriv = 0;
 
-float r_p = 2.4, r_i = 0, r_d = 0;      // PID - Roll
-float p_p = 2.4, p_i = 0, p_d = 0;      // PID - Pitch
+float r_p = 100.0, r_i = 0, r_d = 0;      // PID - Roll
+float p_p = 100.0, p_i = 0, p_d = 0;      // PID - Pitch
 float y_p = 0, y_i = 0, y_d = 0;      // PI - Yaw
 
 // RC receiver variables.
@@ -89,7 +89,7 @@ void setup(void) {
 
   // Set default operational mode to manual
   flight_mode = 2;
-  armed = false;
+  armed = true;
   pinMode(ledpin, OUTPUT);
   modeTimer.begin(blinkLED, 500000);
 
@@ -258,6 +258,14 @@ void loop(void) {
     FrontRight.writeMicroseconds((int)fr);
     BackLeft.writeMicroseconds((int)bl);
     BackRight.writeMicroseconds((int)br);
+  }else{
+
+    // The system is not armed!
+    // Don't let motors spin!
+    FrontLeft.writeMicroseconds(1000);
+    FrontRight.writeMicroseconds(1000);
+    BackLeft.writeMicroseconds(1000);
+    BackRight.writeMicroseconds(1000);
   }
 
   unsigned long end_time = millis();
