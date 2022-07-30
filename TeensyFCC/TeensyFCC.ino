@@ -8,7 +8,7 @@
 #define FRM   4
 #define BRM   5
 #define BLM   6
-#define MIN_MOTOR_MS_VAL 1150       // At this value motors start spinning!
+#define MIN_MOTOR_MS_VAL 1080       // At this value motors start spinning!
 #define MAX_MOTOR_MS_VAL 1950
 Servo FrontLeft, FrontRight, BackLeft, BackRight;
 
@@ -20,7 +20,7 @@ float veh_pitch, veh_roll, veh_yaw;
 float gyro_roll, gyro_pitch, gyro_yaw;
 float acc_pitch, acc_roll;
 
-// PID Controller variables
+// PID Rate Controller variables
 float comm_roll = 0, comm_pitch = 0, comm_yaw = 0;
 
 float roll_err = 0, pitch_err = 0, yaw_err = 0;
@@ -29,9 +29,9 @@ float roll_prev_err = 0, pitch_prev_err = 0, yaw_prev_err = 0;
 float roll_err_int = 0, pitch_err_int = 0, yaw_err_int = 0;
 float roll_err_deriv = 0, pitch_err_deriv = 0, yaw_err_deriv = 0;
 
-float r_p = 100.0, r_i = 0, r_d = 0;      // PID - Roll
-float p_p = 100.0, p_i = 0, p_d = 0;      // PID - Pitch
-float y_p = 0, y_i = 0, y_d = 0;      // PI - Yaw
+float r_p = 1.44, r_i = 0.0, r_d = 0.005;      // PID - Roll
+float p_p = 1.44, p_i = 0.0, p_d = 0.005;      // PID - Pitch
+float y_p = 2.0, y_i = 0.01, y_d = 0.0;      // PID - Yaw
 
 // RC receiver variables.
 bfs::SbusRx sbus_rx(&Serial1);
@@ -45,11 +45,12 @@ std::array<int16_t, bfs::SbusRx::NUM_CH()> sbus_data;
 #define YAW_CH      4
 #define MODE_CH     5
 #define ARM_CH      10
+int throttle;
 
 // Modes
 // 0 - Off mode. LED blinks slow.
-// 1 - RC Passthrough (no flight controller in the loop). LED blinks medium.
-// 2 - Stabilize mode (with rate controller in the loop for pitch and roll, NO YAW). LED blinks fast!
+// 1 - Open Loop Passthrough (no flight controller in the loop, only have control over throttle). LED blinks medium.
+// 2 - Acro mode (with rate controller in the loop for pitch, roll, and YAW). LED blinks fast!
 int flight_mode;
 bool state_updated;
 bool armed;
@@ -61,13 +62,15 @@ IntervalTimer modeTimer;
 IntervalTimer logTimer;
 
 void logToConsole(){
-  Serial.print(r_p);
+  /**
+  Serial.print(throttle);
+  Serial.println();
+  **/
+  Serial.print(roll_err);
   Serial.print(", ");
-  Serial.print(veh_roll);
+  Serial.print(pitch_err);
   Serial.print(", ");
-  Serial.print(veh_pitch);
-  Serial.print(", ");
-  Serial.print(veh_yaw);
+  Serial.print(yaw_err);
   Serial.print(", ");
   Serial.print(comm_roll);
   Serial.print(", ");
@@ -86,16 +89,23 @@ void blinkLED(){
 }
 
 void setup(void) {
+  // Starting communication buses.
+  Wire.begin();
+  Serial.begin(1000000);
 
   // Set default operational mode to manual
   flight_mode = 2;
-  armed = true;
+  armed = false;          // Default not armed.
   pinMode(ledpin, OUTPUT);
   modeTimer.begin(blinkLED, 500000);
 
-  // Start logger process.
-  logTimer.begin(logToConsole, 10000);      // Logging @ 100Hz
-  
+  // Start logger process only if usb cable is connected.
+  // When USB is not connected not having this running will help save cycles.
+  if (Serial)
+  {
+    logTimer.begin(logToConsole, 10000);      // Logging @ 100Hz
+  }
+    
   // Setup sbus receiver.
   sbus_rx.Begin();
 
@@ -110,9 +120,6 @@ void setup(void) {
   FrontRight.writeMicroseconds(1000);
   BackLeft.writeMicroseconds(1000);
   BackRight.writeMicroseconds(1000);
-  
-  Wire.begin();
-  Serial.begin(1000000);
   
   // Waiting to see if IMU is connected.
   while (1) {
@@ -144,6 +151,9 @@ void loop(void) {
   bmi088.getAcceleration(&ax, &ay, &az);  // g/s^2
   bmi088.getGyroscope(&gx, &gy, &gz);     // deg/s
   temp = bmi088.getTemperature();
+
+  // Potentially add in a low pass filter for gx, gy, gz before sending readings to rate controller
+  // ToDo: Add in low pass filter.
 
   // Estimating pitch, roll, and yaw angles by integrating and transfering pitch to roll and roll to pitch based on yaw.
   gyro_roll += (gx * .004);
@@ -178,12 +188,12 @@ void loop(void) {
     }
 
     // Update mode selection.
-    if (map(sbus_data[MODE_CH-1], MIN_CH_VAL, MAX_CH_VAL, MIN_MOTOR_MS_VAL, MAX_MOTOR_MS_VAL) > 1500){
+    if (map(sbus_data[MODE_CH-1], MIN_CH_VAL, MAX_CH_VAL, MIN_MOTOR_MS_VAL, MAX_MOTOR_MS_VAL) > 1700){
       flight_mode = 2;
       modeTimer.update(100000);
-    }else if (map(sbus_data[MODE_CH-1], MIN_CH_VAL, MAX_CH_VAL, MIN_MOTOR_MS_VAL, MAX_MOTOR_MS_VAL) < 1500){
+    }else if (map(sbus_data[MODE_CH-1], MIN_CH_VAL, MAX_CH_VAL, MIN_MOTOR_MS_VAL, MAX_MOTOR_MS_VAL) < 1300){
       flight_mode = 0;
-      modeTimer.update(2000000);
+      modeTimer.update(1000000);
     }else {
       flight_mode = 1;
       modeTimer.update(500000);
@@ -193,29 +203,30 @@ void loop(void) {
   // Switch between flight modes.
   if (flight_mode == 1 and armed == true)
   {
-    int throttle = map(sbus_data[THROTTLE_CH-1], MIN_CH_VAL, MAX_CH_VAL, MIN_MOTOR_MS_VAL, MAX_MOTOR_MS_VAL);
-    int pitch_pwm = map(sbus_data[PITCH_CH-1], MIN_CH_VAL, MAX_CH_VAL, -50, 50);      // All of these inputs are as deltas from throttle pwm value.
-    int roll_pwm = map(sbus_data[ROLL_CH-1], MIN_CH_VAL, MAX_CH_VAL, -50, 50);        // ^
-    int yaw_pwm = map(sbus_data[YAW_CH-1], MIN_CH_VAL, MAX_CH_VAL, -50, 50);          // ^
+    // Open loop passthrough
+    throttle = map(sbus_data[THROTTLE_CH-1], MIN_CH_VAL, MAX_CH_VAL, MIN_MOTOR_MS_VAL, MAX_MOTOR_MS_VAL);
+    //int pitch_pwm = map(sbus_data[PITCH_CH-1], MIN_CH_VAL, MAX_CH_VAL, -50, 50);      // All of these inputs are as deltas from throttle pwm value.
+    //int roll_pwm = map(sbus_data[ROLL_CH-1], MIN_CH_VAL, MAX_CH_VAL, -50, 50);        // ^
+    //int yaw_pwm = map(sbus_data[YAW_CH-1], MIN_CH_VAL, MAX_CH_VAL, -50, 50);          // ^
   
-    // Mixer, allocation of input signal.
-    FrontLeft.writeMicroseconds(throttle + roll_pwm + pitch_pwm + yaw_pwm);
-    FrontRight.writeMicroseconds(throttle - roll_pwm + pitch_pwm - yaw_pwm);
-    BackLeft.writeMicroseconds(throttle + roll_pwm - pitch_pwm - yaw_pwm);
-    BackRight.writeMicroseconds(throttle - roll_pwm - pitch_pwm + yaw_pwm);
+    // Send throttle to all motors.
+    FrontLeft.writeMicroseconds(throttle);  // + roll_pwm + pitch_pwm + yaw_pwm);
+    FrontRight.writeMicroseconds(throttle); // - roll_pwm + pitch_pwm - yaw_pwm);
+    BackLeft.writeMicroseconds(throttle);   // + roll_pwm - pitch_pwm - yaw_pwm);
+    BackRight.writeMicroseconds(throttle);  // - roll_pwm - pitch_pwm + yaw_pwm);
   }else if (flight_mode == 2 and armed == true)
   {
-    // Stabilization mode. 
-    // PID controller running on pitch and roll axis.
-    int throttle = map(sbus_data[THROTTLE_CH-1], MIN_CH_VAL, MAX_CH_VAL, MIN_MOTOR_MS_VAL, MAX_MOTOR_MS_VAL);
-    float des_pitch = map((float)sbus_data[PITCH_CH-1], (float)MIN_CH_VAL, (float)MAX_CH_VAL, -5.0, 5.0);        // Inputs are in desired degrees.
-    float des_roll = map((float)sbus_data[ROLL_CH-1], (float)MIN_CH_VAL, (float)MAX_CH_VAL, -5.0, 5.0);          // ^
-    float des_yaw = map((float)sbus_data[YAW_CH-1], (float)MIN_CH_VAL, (float)MAX_CH_VAL, -5.0, 5.0);            // ^
+    // Acro mode. 
+    // PID rate controller running on pitch, roll, and yaw axis.
+    throttle = map(sbus_data[THROTTLE_CH-1], MIN_CH_VAL, MAX_CH_VAL, MIN_MOTOR_MS_VAL, MAX_MOTOR_MS_VAL);
+    float des_pitch = map((float)sbus_data[PITCH_CH-1], (float)MIN_CH_VAL, (float)MAX_CH_VAL, -50.0, 50.0);        // Inputs are in degrees / sec.
+    float des_roll = map((float)sbus_data[ROLL_CH-1], (float)MIN_CH_VAL, (float)MAX_CH_VAL, -50.0, 50.0);          // ^
+    float des_yaw = map((float)sbus_data[YAW_CH-1], (float)MIN_CH_VAL, (float)MAX_CH_VAL, -50.0, 50.0);            // ^
 
     // Signage defines direction we need to go in.
-    roll_err = des_roll - veh_roll;
-    pitch_err = des_pitch - veh_pitch;
-    yaw_err = des_yaw - veh_yaw;
+    roll_err = des_roll - gx;
+    pitch_err = des_pitch - (gy * -1);
+    yaw_err = des_yaw - (gz * -1);
 
     // Put error through PID for each axis
     roll_err_int += (roll_prev_err + roll_err) * (.004 / 2.0);     // Trapazoidal integral estimation
@@ -253,7 +264,7 @@ void loop(void) {
     if (br > MAX_MOTOR_MS_VAL) br = MAX_MOTOR_MS_VAL;
     if (br < MIN_MOTOR_MS_VAL) br = MIN_MOTOR_MS_VAL;
 
-    // Sending safe commands to 
+    // Sending safe commands to motors
     FrontLeft.writeMicroseconds((int)fl);
     FrontRight.writeMicroseconds((int)fr);
     BackLeft.writeMicroseconds((int)bl);
