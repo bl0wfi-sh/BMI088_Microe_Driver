@@ -29,9 +29,9 @@ float roll_prev_err = 0, pitch_prev_err = 0, yaw_prev_err = 0;
 float roll_err_int = 0, pitch_err_int = 0, yaw_err_int = 0;
 float roll_err_deriv = 0, pitch_err_deriv = 0, yaw_err_deriv = 0;
 
-float r_p = 1.44, r_i = 0.0, r_d = 0.005;      // PID - Roll
-float p_p = 1.44, p_i = 0.0, p_d = 0.005;      // PID - Pitch
-float y_p = 2.0, y_i = 0.01, y_d = 0.0;      // PID - Yaw
+float r_p = 2.0736, r_i = 0.0, r_d = 0.005;  // PID - Roll
+float p_p = 2.0736, p_i = 0.0, p_d = 0.005;  // PID - Pitch
+float y_p = 3.0, y_i = 0.05, y_d = 0.0;      // PID - Yaw
 
 // RC receiver variables.
 bfs::SbusRx sbus_rx(&Serial1);
@@ -219,9 +219,9 @@ void loop(void) {
     // Acro mode. 
     // PID rate controller running on pitch, roll, and yaw axis.
     throttle = map(sbus_data[THROTTLE_CH-1], MIN_CH_VAL, MAX_CH_VAL, MIN_MOTOR_MS_VAL, MAX_MOTOR_MS_VAL);
-    float des_pitch = map((float)sbus_data[PITCH_CH-1], (float)MIN_CH_VAL, (float)MAX_CH_VAL, -50.0, 50.0);        // Inputs are in degrees / sec.
-    float des_roll = map((float)sbus_data[ROLL_CH-1], (float)MIN_CH_VAL, (float)MAX_CH_VAL, -50.0, 50.0);          // ^
-    float des_yaw = map((float)sbus_data[YAW_CH-1], (float)MIN_CH_VAL, (float)MAX_CH_VAL, -50.0, 50.0);            // ^
+    float des_pitch = map((float)sbus_data[PITCH_CH-1], (float)MIN_CH_VAL, (float)MAX_CH_VAL, -25.0, 25.0);        // Inputs are in degrees / sec.
+    float des_roll = map((float)sbus_data[ROLL_CH-1], (float)MIN_CH_VAL, (float)MAX_CH_VAL, -25.0, 25.0);          // ^
+    float des_yaw = map((float)sbus_data[YAW_CH-1], (float)MIN_CH_VAL, (float)MAX_CH_VAL, -25.0, 25.0);            // ^
 
     // Signage defines direction we need to go in.
     roll_err = des_roll - gx;
@@ -248,19 +248,19 @@ void loop(void) {
 
     // Putting commanded roll, pitch, and yaw through mixer.
     // Error handling for commanding too little and too greate of PWM values.
-    float fl = throttle + comm_roll + comm_pitch + comm_yaw;
+    float fl = throttle + comm_roll + comm_pitch - comm_yaw;
     if (fl > MAX_MOTOR_MS_VAL) fl = MAX_MOTOR_MS_VAL;
     if (fl < MIN_MOTOR_MS_VAL) fl = MIN_MOTOR_MS_VAL;
 
-    float fr = throttle - comm_roll + comm_pitch - comm_yaw;
+    float fr = throttle - comm_roll + comm_pitch + comm_yaw;
     if (fr > MAX_MOTOR_MS_VAL) fr = MAX_MOTOR_MS_VAL;
     if (fr < MIN_MOTOR_MS_VAL) fr = MIN_MOTOR_MS_VAL;
 
-    float bl = throttle + comm_roll - comm_pitch - comm_yaw;
+    float bl = throttle + comm_roll - comm_pitch + comm_yaw;
     if (bl > MAX_MOTOR_MS_VAL) bl = MAX_MOTOR_MS_VAL;
     if (bl < MIN_MOTOR_MS_VAL) bl = MIN_MOTOR_MS_VAL;
 
-    float br = throttle - comm_roll - comm_pitch + comm_yaw;
+    float br = throttle - comm_roll - comm_pitch - comm_yaw;
     if (br > MAX_MOTOR_MS_VAL) br = MAX_MOTOR_MS_VAL;
     if (br < MIN_MOTOR_MS_VAL) br = MIN_MOTOR_MS_VAL;
 
