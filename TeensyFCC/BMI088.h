@@ -107,6 +107,12 @@ enum acc_scale_type_t { // measurement rage
     RANGE_24G = 0x03, //
 };
 
+enum acc_bwp_type_t { // Bandwidth of low pass filter
+    BWP_4_FOLD = 0x08,
+    BWP_2_FOLD = 0x09,
+    BWP_NORM = 0x0A,
+};
+
 enum acc_odr_type_t { // output data rate
     ODR_12 = 0x05, //
     ODR_25 = 0x06, //
@@ -162,6 +168,7 @@ class BMI088 {
 
     void setAccScaleRange(acc_scale_type_t range);
     void setAccOutputDataRate(acc_odr_type_t odr);
+    void setAccLowPassFilterBandwidth(acc_bwp_type_t bwp);
 
     void setGyroScaleRange(gyro_scale_type_t range);
     void setGyroOutputDataRate(gyro_odr_type_t odr);

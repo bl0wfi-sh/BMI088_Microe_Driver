@@ -23,14 +23,19 @@ float acc_pitch, acc_roll;
 // PID Rate Controller variables
 float comm_roll = 0, comm_pitch = 0, comm_yaw = 0;
 
+float roll_att_err = 0, pitch_att_err = 0, yaw_att_err = 0;
+float a_r_p = 1, a_p_p = 1, a_y_p = 1;
+#define MAX_RATE_COMMAND 25.0           // Max allowable rate command from attitude controller to rate controller.
+#define MIN_RATE_COMMAND -25.0          // Min allowable rate command from attitude controller to rate controller.
+ 
 float roll_err = 0, pitch_err = 0, yaw_err = 0;
 float roll_prev_err = 0, pitch_prev_err = 0, yaw_prev_err = 0;
 
 float roll_err_int = 0, pitch_err_int = 0, yaw_err_int = 0;
 float roll_err_deriv = 0, pitch_err_deriv = 0, yaw_err_deriv = 0;
 
-float r_p = 2.0736, r_i = 0.0, r_d = 0.005;  // PID - Roll
-float p_p = 2.0736, p_i = 0.0, p_d = 0.005;  // PID - Pitch
+float r_p = 2.0, r_i = 0.0, r_d = 0.001;  // PID - Roll
+float p_p = 2.0, p_i = 0.0, p_d = 0.001;  // PID - Pitch
 float y_p = 3.0, y_i = 0.05, y_d = 0.0;      // PID - Yaw
 
 // RC receiver variables.
@@ -167,7 +172,7 @@ void loop(void) {
   acc_roll = asin(ay/acc_tot_vect) * (180.0 /3.142);
   acc_pitch = asin(ax/acc_tot_vect) * (180.0 /3.142);
   
-  // Now lets use both the gyro and accel with a complimentary filter.
+  // Now lets use both the gyro and accel with a complimentary filter to estimate attitude.
   veh_roll = (gyro_roll * 0.9995) + (acc_roll * 0.0005);
   veh_pitch = (gyro_pitch * 0.9995) + (acc_pitch * 0.0005);
   veh_yaw = gyro_yaw;
@@ -223,6 +228,25 @@ void loop(void) {
     float des_roll = map((float)sbus_data[ROLL_CH-1], (float)MIN_CH_VAL, (float)MAX_CH_VAL, -25.0, 25.0);          // ^
     float des_yaw = map((float)sbus_data[YAW_CH-1], (float)MIN_CH_VAL, (float)MAX_CH_VAL, -25.0, 25.0);            // ^
 
+    // Starting attitude controller code.
+    // *** CURRENTLY CONTROLLER IS NOT BEING USED! ***
+    roll_att_err = des_roll - veh_roll;
+    pitch_att_err = des_pitch - veh_pitch;
+    yaw_att_err = des_yaw - veh_yaw;
+
+    float comm_roll_rate = roll_att_err * a_r_p;
+    float comm_pitch_rate = pitch_att_err * a_p_p;
+    float comm_yaw_rate = yaw_att_err * a_y_p;
+
+    // Making sure our attitude controller does not blow up our rate controller with crazy desired velocities.
+    if (comm_roll_rate > MAX_RATE_COMMAND) comm_roll_rate = MAX_RATE_COMMAND;
+    if (comm_roll_rate < MIN_RATE_COMMAND) comm_roll_rate = MIN_RATE_COMMAND;
+    if (comm_pitch_rate > MAX_RATE_COMMAND) comm_pitch_rate = MAX_RATE_COMMAND;
+    if (comm_pitch_rate < MIN_RATE_COMMAND) comm_pitch_rate = MIN_RATE_COMMAND;
+    if (comm_yaw_rate > MAX_RATE_COMMAND) comm_yaw_rate = MAX_RATE_COMMAND;
+    if (comm_yaw_rate < MIN_RATE_COMMAND) comm_yaw_rate = MIN_RATE_COMMAND;
+
+    // Starting rate controller code.
     // Signage defines direction we need to go in.
     roll_err = des_roll - gx;
     pitch_err = des_pitch - (gy * -1);
