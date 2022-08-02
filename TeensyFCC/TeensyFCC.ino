@@ -24,9 +24,9 @@ float acc_pitch, acc_roll;
 float comm_roll = 0, comm_pitch = 0, comm_yaw = 0;
 
 float roll_att_err = 0, pitch_att_err = 0, yaw_att_err = 0;
-float a_r_p = 1, a_p_p = 1, a_y_p = 1;
-#define MAX_RATE_COMMAND 25.0           // Max allowable rate command from attitude controller to rate controller.
-#define MIN_RATE_COMMAND -25.0          // Min allowable rate command from attitude controller to rate controller.
+float a_r_p = 2.0, a_p_p = 2.0, a_y_p = 1.2;
+#define MAX_RATE_COMMAND 200.0           // Max allowable rate command from attitude controller to rate controller. deg/s
+#define MIN_RATE_COMMAND -200.0          // Min allowable rate command from attitude controller to rate controller. deg/s
  
 float roll_err = 0, pitch_err = 0, yaw_err = 0;
 float roll_prev_err = 0, pitch_prev_err = 0, yaw_prev_err = 0;
@@ -34,9 +34,9 @@ float roll_prev_err = 0, pitch_prev_err = 0, yaw_prev_err = 0;
 float roll_err_int = 0, pitch_err_int = 0, yaw_err_int = 0;
 float roll_err_deriv = 0, pitch_err_deriv = 0, yaw_err_deriv = 0;
 
-float r_p = 2.05, r_i = 0.02, r_d = 0.00144;  // PID - Roll
-float p_p = 2.05, p_i = 0.02, p_d = 0.00144;  // PID - Pitch 
-float y_p = 3.0, y_i = 0.05, y_d = 0.0;      // PID - Yaw
+float r_p = 1.8, r_i = 0.07, r_d = 0.005;  // PID - Roll
+float p_p = 1.8, p_i = 0.07, p_d = 0.005;  // PID - Pitch 
+float y_p = 4.4, y_i = 0.05, y_d = 0.0;      // PID - Yaw
 
 // RC receiver variables.
 bfs::SbusRx sbus_rx(&Serial1);
@@ -55,7 +55,7 @@ int throttle;
 // Modes
 // 0 - Off mode. LED blinks slow.
 // 1 - Open Loop Passthrough (no flight controller in the loop, only have control over throttle). LED blinks medium.
-// 2 - Acro mode (with rate controller in the loop for pitch, roll, and YAW). LED blinks fast!
+// 2 - Stablized mode (Cascaeded P -> PID loops. P for attitude, PID for rates). LED blinks fast!
 int flight_mode;
 bool state_updated;
 bool armed;
@@ -70,6 +70,12 @@ void logToConsole(){
   /**
   Serial.print(throttle);
   Serial.println();
+  Serial.print(veh_roll);
+  Serial.print(", ");
+  Serial.print(veh_pitch);
+  Serial.print(", ");
+  Serial.print(veh_yaw);
+  Serial.print(", ");
   **/
   Serial.print(roll_err);
   Serial.print(", ");
@@ -135,15 +141,27 @@ void setup(void) {
       } else {
           Serial.println("BMI088 is not connected");
       }
-  
-      delay(2000);
+      delay(1);
   }  
 
   // Initialize gyro angles to accelerometer readings in the beginning.
-  bmi088.getAcceleration(&ax, &ay, &az);  // g/s^2 
-  float acc_tot_vect = sqrt((ax*ax) + (ay*ay) + (az*az));
-  acc_roll = asin(ay/acc_tot_vect) * (180.0 /3.142);
-  acc_pitch = asin(ax/acc_tot_vect) * (180.0 /3.142);
+  float avg_ax = 0;
+  float avg_ay = 0;
+  float avg_az = 0;
+  for(int i = 0; i < 100; i++)
+  {
+      bmi088.getAcceleration(&ax, &ay, &az);  // g/s^2 
+      avg_ax += ax;
+      avg_ay += ay;
+      avg_az += az;
+  }
+  avg_ax = avg_ax / 100.0;
+  avg_ay = avg_ay / 100.0;
+  avg_az = avg_az / 100.0;
+  
+  float acc_tot_vect = sqrt((avg_ax*avg_ax) + (avg_ay*avg_ay) + (avg_az*avg_az));
+  acc_roll = asin(avg_ay/acc_tot_vect) * (180.0 /3.142);
+  acc_pitch = asin(avg_ax/acc_tot_vect) * (180.0 /3.142);
   gyro_roll = acc_roll;
   gyro_pitch = acc_pitch;
 }
@@ -156,9 +174,6 @@ void loop(void) {
   bmi088.getAcceleration(&ax, &ay, &az);  // g/s^2
   bmi088.getGyroscope(&gx, &gy, &gz);     // deg/s
   temp = bmi088.getTemperature();
-
-  // Potentially add in a low pass filter for gx, gy, gz before sending readings to rate controller
-  // ToDo: Add in low pass filter.
 
   // Estimating pitch, roll, and yaw angles by integrating and transfering pitch to roll and roll to pitch based on yaw.
   gyro_roll += (gx * .004);
@@ -210,9 +225,6 @@ void loop(void) {
   {
     // Open loop passthrough
     throttle = map(sbus_data[THROTTLE_CH-1], MIN_CH_VAL, MAX_CH_VAL, MIN_MOTOR_MS_VAL, MAX_MOTOR_MS_VAL);
-    //int pitch_pwm = map(sbus_data[PITCH_CH-1], MIN_CH_VAL, MAX_CH_VAL, -50, 50);      // All of these inputs are as deltas from throttle pwm value.
-    //int roll_pwm = map(sbus_data[ROLL_CH-1], MIN_CH_VAL, MAX_CH_VAL, -50, 50);        // ^
-    //int yaw_pwm = map(sbus_data[YAW_CH-1], MIN_CH_VAL, MAX_CH_VAL, -50, 50);          // ^
   
     // Send throttle to all motors.
     FrontLeft.writeMicroseconds(throttle);  // + roll_pwm + pitch_pwm + yaw_pwm);
@@ -221,15 +233,14 @@ void loop(void) {
     BackRight.writeMicroseconds(throttle);  // - roll_pwm - pitch_pwm + yaw_pwm);
   }else if (flight_mode == 2 and armed == true)
   {
-    // Acro mode. 
+    // Stabilized mode. 
     // PID rate controller running on pitch, roll, and yaw axis.
     throttle = map(sbus_data[THROTTLE_CH-1], MIN_CH_VAL, MAX_CH_VAL, MIN_MOTOR_MS_VAL, MAX_MOTOR_MS_VAL);
-    float des_pitch = map((float)sbus_data[PITCH_CH-1], (float)MIN_CH_VAL, (float)MAX_CH_VAL, -25.0, 25.0);        // Inputs are in degrees / sec.
-    float des_roll = map((float)sbus_data[ROLL_CH-1], (float)MIN_CH_VAL, (float)MAX_CH_VAL, -25.0, 25.0);          // ^
-    float des_yaw = map((float)sbus_data[YAW_CH-1], (float)MIN_CH_VAL, (float)MAX_CH_VAL, -25.0, 25.0);            // ^
+    float des_pitch = map((float)sbus_data[PITCH_CH-1], (float)MIN_CH_VAL, (float)MAX_CH_VAL, -30.0, 30.0);        // Inputs are in degrees.
+    float des_roll = map((float)sbus_data[ROLL_CH-1], (float)MIN_CH_VAL, (float)MAX_CH_VAL, -30.0, 30.0);          // ^
+    float des_yaw = map((float)sbus_data[YAW_CH-1], (float)MIN_CH_VAL, (float)MAX_CH_VAL, -180.0, 180.0);          // ^
 
     // Starting attitude controller code.
-    // *** CURRENTLY CONTROLLER IS NOT BEING USED! ***
     roll_att_err = des_roll - veh_roll;
     pitch_att_err = des_pitch - veh_pitch;
     yaw_att_err = des_yaw - veh_yaw;
@@ -247,10 +258,10 @@ void loop(void) {
     if (comm_yaw_rate < MIN_RATE_COMMAND) comm_yaw_rate = MIN_RATE_COMMAND;
 
     // Starting rate controller code.
-    // Signage defines direction we need to go in.
-    roll_err = des_roll - gx;
-    pitch_err = des_pitch - (gy * -1);
-    yaw_err = des_yaw - (gz * -1);
+    // Pay attention to signage.
+    roll_err = comm_roll_rate - gx;
+    pitch_err = comm_pitch_rate - (gy * -1);
+    yaw_err = comm_yaw_rate - (gz * -1);
 
     // Put error through PID for each axis
     roll_err_int += (roll_prev_err + roll_err) * (.004 / 2.0);     // Trapazoidal integral estimation
@@ -271,7 +282,7 @@ void loop(void) {
     comm_yaw = (y_p * yaw_err) + (y_i * yaw_err_int) + (y_d * yaw_err_deriv);
 
     // Putting commanded roll, pitch, and yaw through mixer.
-    // Error handling for commanding too little and too greate of PWM values.
+    // Error handling for commanding too little or too great of a PWM value.
     float fl = throttle + comm_roll + comm_pitch - comm_yaw;
     if (fl > MAX_MOTOR_MS_VAL) fl = MAX_MOTOR_MS_VAL;
     if (fl < MIN_MOTOR_MS_VAL) fl = MIN_MOTOR_MS_VAL;
@@ -310,6 +321,6 @@ void loop(void) {
     Serial.println("ERROR LOOP TOOK TOO LONG!!!");
     modeTimer.update(10000);
   }else{
-    delay(4 - elapsed); // System will run @ 250Hz
+    delay(4 - elapsed); // System will run @ 250Hz or 4ms.
   }
 }
