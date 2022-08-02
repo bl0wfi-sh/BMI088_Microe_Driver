@@ -34,8 +34,8 @@ float roll_prev_err = 0, pitch_prev_err = 0, yaw_prev_err = 0;
 float roll_err_int = 0, pitch_err_int = 0, yaw_err_int = 0;
 float roll_err_deriv = 0, pitch_err_deriv = 0, yaw_err_deriv = 0;
 
-float r_p = 2.0, r_i = 0.0, r_d = 0.001;  // PID - Roll
-float p_p = 2.0, p_i = 0.0, p_d = 0.001;  // PID - Pitch
+float r_p = 2.05, r_i = 0.02, r_d = 0.00144;  // PID - Roll
+float p_p = 2.05, p_i = 0.02, p_d = 0.00144;  // PID - Pitch 
 float y_p = 3.0, y_i = 0.05, y_d = 0.0;      // PID - Yaw
 
 // RC receiver variables.
