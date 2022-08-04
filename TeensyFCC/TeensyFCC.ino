@@ -24,7 +24,7 @@ float acc_pitch, acc_roll;
 float comm_roll = 0, comm_pitch = 0, comm_yaw = 0;
 
 float roll_att_err = 0, pitch_att_err = 0, yaw_att_err = 0;
-float a_r_p = 2.0, a_p_p = 2.0, a_y_p = 1.2;
+float a_r_p = 3.0, a_p_p = 3.0, a_y_p = 1.2;
 #define MAX_RATE_COMMAND 200.0           // Max allowable rate command from attitude controller to rate controller. deg/s
 #define MIN_RATE_COMMAND -200.0          // Min allowable rate command from attitude controller to rate controller. deg/s
  
@@ -34,8 +34,8 @@ float roll_prev_err = 0, pitch_prev_err = 0, yaw_prev_err = 0;
 float roll_err_int = 0, pitch_err_int = 0, yaw_err_int = 0;
 float roll_err_deriv = 0, pitch_err_deriv = 0, yaw_err_deriv = 0;
 
-float r_p = 1.8, r_i = 0.07, r_d = 0.005;  // PID - Roll
-float p_p = 1.8, p_i = 0.07, p_d = 0.005;  // PID - Pitch 
+float r_p = 1.3, r_i = 0.0, r_d = 0.007;  // PID - Roll
+float p_p = 1.3, p_i = 0.0, p_d = 0.007;  // PID - Pitch 
 float y_p = 4.4, y_i = 0.05, y_d = 0.0;      // PID - Yaw
 
 // RC receiver variables.
@@ -67,7 +67,7 @@ IntervalTimer modeTimer;
 IntervalTimer logTimer;
 
 void logToConsole(){
-  /**
+  /** Log for humans!
   Serial.print(throttle);
   Serial.println();
   Serial.print(veh_roll);
@@ -88,6 +88,11 @@ void logToConsole(){
   Serial.print(comm_pitch);
   Serial.print(", ");
   Serial.println(comm_yaw);
+  /** Log for telemetry visualization
+  Data structure:
+  gx, gy, gz, ax, ay, az, att_errors(r,p,y), att_setpoint(r,p,y), rate_errors(r,p,y), rate_setpoint(r,p,y), throttle
+  
+  **/
 }
 
 void blinkLED(){
@@ -236,8 +241,8 @@ void loop(void) {
     // Stabilized mode. 
     // PID rate controller running on pitch, roll, and yaw axis.
     throttle = map(sbus_data[THROTTLE_CH-1], MIN_CH_VAL, MAX_CH_VAL, MIN_MOTOR_MS_VAL, MAX_MOTOR_MS_VAL);
-    float des_pitch = map((float)sbus_data[PITCH_CH-1], (float)MIN_CH_VAL, (float)MAX_CH_VAL, -30.0, 30.0);        // Inputs are in degrees.
-    float des_roll = map((float)sbus_data[ROLL_CH-1], (float)MIN_CH_VAL, (float)MAX_CH_VAL, -30.0, 30.0);          // ^
+    float des_pitch = map((float)sbus_data[PITCH_CH-1], (float)MIN_CH_VAL, (float)MAX_CH_VAL, -15.0, 15.0);        // Inputs are in degrees.
+    float des_roll = map((float)sbus_data[ROLL_CH-1], (float)MIN_CH_VAL, (float)MAX_CH_VAL, -15.0, 15.0);          // ^
     float des_yaw = map((float)sbus_data[YAW_CH-1], (float)MIN_CH_VAL, (float)MAX_CH_VAL, -180.0, 180.0);          // ^
 
     // Starting attitude controller code.
