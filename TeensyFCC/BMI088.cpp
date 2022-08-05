@@ -38,13 +38,13 @@ BMI088::BMI088(void) {
 }
 
 void BMI088::initialize(void) {
-    setAccScaleRange(RANGE_24G);
-    setAccOutputDataRate(ODR_400);
+    setAccScaleRange(RANGE_3G);
+    setAccOutputDataRate(ODR_1600);
     setAccLowPassFilterBandwidth(BWP_4_FOLD);   // Refer to data sheet to see how Low Pass Filter is set based on Output Data Rate and this register value.
     setAccPoweMode(ACC_ACTIVE);
 
-    setGyroScaleRange(RANGE_2000);
-    setGyroOutputDataRate(ODR_400_BW_47);
+    setGyroScaleRange(RANGE_500);
+    setGyroOutputDataRate(ODR_2000_BW_230);
     setGyroPoweMode(GYRO_NORMAL);
 
     calibrateGyro(5000);

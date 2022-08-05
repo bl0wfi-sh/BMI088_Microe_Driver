@@ -2,8 +2,9 @@
 #include "BMI088.h"
 #include "Servo.h"      // Included this so we can run Servo's @ 400Hz. Have not verified they actually run @ 400Hz.
 #include "sbus.h"       // For reading in sbus information. 
+#include "Kalman.h"
 
-// Motor Parameters and Variables
+//*********** Motor Parameters and Variables
 #define FLM   3
 #define FRM   4
 #define BRM   5
@@ -12,19 +13,28 @@
 #define MAX_MOTOR_MS_VAL 1950
 Servo FrontLeft, FrontRight, BackLeft, BackRight;
 
-// IMU variables
-float ax = 0, ay = 0, az = 0;
-float gx = 0, gy = 0, gz = 0;
-int16_t temp = 0;
+//*********** Loop Time
+#define LOOP_TIME .002   // In seconds!
+
+//*********** State Estimation
+IntervalTimer stateEstimator;           // Estimator will run @ 1kHz.
 float veh_pitch, veh_roll, veh_yaw;
 float gyro_roll, gyro_pitch, gyro_yaw;
 float acc_pitch, acc_roll;
+float k_roll, k_pitch;
+Kalman k_roll_estimator;
+Kalman k_pitch_estimator;
 
-// PID Rate Controller variables
+//*********** Raw IMU variables
+float ax = 0, ay = 0, az = 0;
+float gx = 0, gy = 0, gz = 0;
+int16_t temp = 0;
+
+//*********** PID Rate Controller variables
 float comm_roll = 0, comm_pitch = 0, comm_yaw = 0;
 
 float roll_att_err = 0, pitch_att_err = 0, yaw_att_err = 0;
-float a_r_p = 3.0, a_p_p = 3.0, a_y_p = 1.2;
+float a_r_p = 2.0, a_p_p = 2.0, a_y_p = 1.2;
 #define MAX_RATE_COMMAND 200.0           // Max allowable rate command from attitude controller to rate controller. deg/s
 #define MIN_RATE_COMMAND -200.0          // Min allowable rate command from attitude controller to rate controller. deg/s
  
@@ -34,15 +44,15 @@ float roll_prev_err = 0, pitch_prev_err = 0, yaw_prev_err = 0;
 float roll_err_int = 0, pitch_err_int = 0, yaw_err_int = 0;
 float roll_err_deriv = 0, pitch_err_deriv = 0, yaw_err_deriv = 0;
 
-float r_p = 1.3, r_i = 0.0, r_d = 0.007;  // PID - Roll
-float p_p = 1.3, p_i = 0.0, p_d = 0.007;  // PID - Pitch 
-float y_p = 4.4, y_i = 0.05, y_d = 0.0;      // PID - Yaw
+float r_p = 2.04, r_i = 0.0, r_d = 0.0005;  // PID - Roll
+float p_p = 2.04, p_i = 0.0, p_d = 0.0005;  // PID - Pitch
+float y_p = 3.0, y_i = 0.07, y_d = 0.0;        // PID - Yaw
 
-// RC receiver variables.
+//*********** RC receiver variables.
 bfs::SbusRx sbus_rx(&Serial1);
 std::array<int16_t, bfs::SbusRx::NUM_CH()> sbus_data;
 #define MAX_CH_VAL  1693
-#define MIN_CH_VAL  306
+#define MIN_CH_VAL  304
 #define MID_CH_VAL  1387
 #define ROLL_CH     1
 #define PITCH_CH    2
@@ -51,8 +61,11 @@ std::array<int16_t, bfs::SbusRx::NUM_CH()> sbus_data;
 #define MODE_CH     5
 #define ARM_CH      10
 int throttle;
+float des_pitch;
+float des_roll;
+float des_yaw;
 
-// Modes
+//*********** Modes
 // 0 - Off mode. LED blinks slow.
 // 1 - Open Loop Passthrough (no flight controller in the loop, only have control over throttle). LED blinks medium.
 // 2 - Stablized mode (Cascaeded P -> PID loops. P for attitude, PID for rates). LED blinks fast!
@@ -63,20 +76,28 @@ const int ledpin = LED_BUILTIN;
 int ledstate = LOW;
 IntervalTimer modeTimer;
 
-// Debug console!
+//*********** Debug console!
 IntervalTimer logTimer;
 
 void logToConsole(){
   /** Log for humans!
   Serial.print(throttle);
   Serial.println();
-  Serial.print(veh_roll);
+  **/
+  /**
+  Serial.print(k_roll);
   Serial.print(", ");
-  Serial.print(veh_pitch);
+  Serial.print(k_pitch);
   Serial.print(", ");
   Serial.print(veh_yaw);
   Serial.print(", ");
   **/
+  Serial.print(des_roll);
+  Serial.print(", ");
+  Serial.print(des_pitch);
+  Serial.print(", ");
+  Serial.print(des_yaw);
+  Serial.print(", ");
   Serial.print(roll_err);
   Serial.print(", ");
   Serial.print(pitch_err);
@@ -91,7 +112,6 @@ void logToConsole(){
   /** Log for telemetry visualization
   Data structure:
   gx, gy, gz, ax, ay, az, att_errors(r,p,y), att_setpoint(r,p,y), rate_errors(r,p,y), rate_setpoint(r,p,y), throttle
-  
   **/
 }
 
@@ -104,9 +124,38 @@ void blinkLED(){
   digitalWrite(ledpin, ledstate);
 }
 
+void updateEstimators(){
+  // Read accelerometer
+  bmi088.getAcceleration(&ax, &ay, &az);  // g/s^2
+  bmi088.getGyroscope(&gx, &gy, &gz);     // deg/s
+  //temp = bmi088.getTemperature();
+
+  // Estimating pitch, roll, and yaw angles by integrating and transfering pitch to roll and roll to pitch based on yaw.
+  gyro_roll += (gx * .00125);
+  gyro_pitch += (-gy * .00125);
+  gyro_roll += gyro_pitch * sin(-gz * .00125 * 3.142 / 180.0);
+  gyro_pitch -= gyro_roll * sin(-gz * .00125 * 3.142 / 180.0);
+  gyro_yaw += (-gz * .00125);
+  
+  // Estimating roll and pitch based on accelerometer.
+  float acc_tot_vect = sqrt((ax*ax) + (ay*ay) + (az*az));
+  acc_roll = asin(ay/acc_tot_vect) * (180.0 /3.142);
+  acc_pitch = asin(ax/acc_tot_vect) * (180.0 /3.142);
+  
+  // Now lets use both the gyro and accel with a complimentary filter to estimate attitude.
+  veh_roll = (gyro_roll * 0.9995) + (acc_roll * 0.0005);
+  veh_pitch = (gyro_pitch * 0.9995) + (acc_pitch * 0.0005);
+  veh_yaw = gyro_yaw;
+
+  // Lets use the kalman filter to estimate roll and pitch.
+  k_roll = k_roll_estimator.getAngle(acc_roll, gx, .00125);
+  k_pitch = k_pitch_estimator.getAngle(acc_pitch, -gy, .00125);
+}
+
 void setup(void) {
   // Starting communication buses.
   Wire.begin();
+  Wire.setClock(400000UL);         // Set I2C frequency to 400kHz.
   Serial.begin(1000000);
 
   // Set default operational mode to manual
@@ -147,7 +196,9 @@ void setup(void) {
           Serial.println("BMI088 is not connected");
       }
       delay(1);
-  }  
+  }
+
+  delay(100);
 
   // Initialize gyro angles to accelerometer readings in the beginning.
   float avg_ax = 0;
@@ -159,6 +210,7 @@ void setup(void) {
       avg_ax += ax;
       avg_ay += ay;
       avg_az += az;
+      delay(1);
   }
   avg_ax = avg_ax / 100.0;
   avg_ay = avg_ay / 100.0;
@@ -169,36 +221,22 @@ void setup(void) {
   acc_pitch = asin(avg_ax/acc_tot_vect) * (180.0 /3.142);
   gyro_roll = acc_roll;
   gyro_pitch = acc_pitch;
+
+  // Initialize the kalman filter.
+  k_roll_estimator.setAngle(acc_roll);
+  k_pitch_estimator.setAngle(acc_pitch);
+
+  // Start estimator in the background.
+  stateEstimator.begin(updateEstimators,1250);
 }
 
 void loop(void) {
 
   unsigned long st_time = millis();
 
-  // Read accelerometer
-  bmi088.getAcceleration(&ax, &ay, &az);  // g/s^2
-  bmi088.getGyroscope(&gx, &gy, &gz);     // deg/s
-  temp = bmi088.getTemperature();
-
-  // Estimating pitch, roll, and yaw angles by integrating and transfering pitch to roll and roll to pitch based on yaw.
-  gyro_roll += (gx * .004);
-  gyro_pitch += (-gy * .004);
-  gyro_roll += gyro_pitch * sin(-gz * .004 * 3.142 / 180.0);
-  gyro_pitch -= gyro_roll * sin(-gz * .004 * 3.142 / 180.0);
-  gyro_yaw += (-gz * .004);
-  
-  // Estimating roll and pitch based on accelerometer.
-  float acc_tot_vect = sqrt((ax*ax) + (ay*ay) + (az*az));
-  acc_roll = asin(ay/acc_tot_vect) * (180.0 /3.142);
-  acc_pitch = asin(ax/acc_tot_vect) * (180.0 /3.142);
-  
-  // Now lets use both the gyro and accel with a complimentary filter to estimate attitude.
-  veh_roll = (gyro_roll * 0.9995) + (acc_roll * 0.0005);
-  veh_pitch = (gyro_pitch * 0.9995) + (acc_pitch * 0.0005);
-  veh_yaw = gyro_yaw;
-
   // Read from SBUS to control quad states and read controller inputs.
   if (sbus_rx.Read()) {
+    
     sbus_data = sbus_rx.ch();
 
     // Update armed state.
@@ -238,16 +276,21 @@ void loop(void) {
     BackRight.writeMicroseconds(throttle);  // - roll_pwm - pitch_pwm + yaw_pwm);
   }else if (flight_mode == 2 and armed == true)
   {
-    // Stabilized mode. 
+    // Stabilized mode / ACRO.
     // PID rate controller running on pitch, roll, and yaw axis.
     throttle = map(sbus_data[THROTTLE_CH-1], MIN_CH_VAL, MAX_CH_VAL, MIN_MOTOR_MS_VAL, MAX_MOTOR_MS_VAL);
-    float des_pitch = map((float)sbus_data[PITCH_CH-1], (float)MIN_CH_VAL, (float)MAX_CH_VAL, -15.0, 15.0);        // Inputs are in degrees.
-    float des_roll = map((float)sbus_data[ROLL_CH-1], (float)MIN_CH_VAL, (float)MAX_CH_VAL, -15.0, 15.0);          // ^
-    float des_yaw = map((float)sbus_data[YAW_CH-1], (float)MIN_CH_VAL, (float)MAX_CH_VAL, -180.0, 180.0);          // ^
+    des_pitch = map((float)sbus_data[PITCH_CH-1], (float)MIN_CH_VAL, (float)MAX_CH_VAL, -35.0, 35.0);        // Inputs are in degrees.
+    des_roll = map((float)sbus_data[ROLL_CH-1], (float)MIN_CH_VAL, (float)MAX_CH_VAL, -35.0, 35.0);          // ^
+    des_yaw = map((float)sbus_data[YAW_CH-1], (float)MIN_CH_VAL, (float)MAX_CH_VAL, -35.0, 35.0);          // ^
+
+    // Deadband controller inputs.
+    if ((des_pitch < .9) && (des_pitch > -0.9)) des_pitch = 0;
+    if ((des_roll < .9) && (des_roll > -0.9)) des_roll = 0;
+    if ((des_yaw < .9) && (des_yaw > -0.9)) des_yaw = 0;
 
     // Starting attitude controller code.
-    roll_att_err = des_roll - veh_roll;
-    pitch_att_err = des_pitch - veh_pitch;
+    roll_att_err = des_roll - k_roll;
+    pitch_att_err = des_pitch - k_pitch;
     yaw_att_err = des_yaw - veh_yaw;
 
     float comm_roll_rate = roll_att_err * a_r_p;
@@ -264,18 +307,18 @@ void loop(void) {
 
     // Starting rate controller code.
     // Pay attention to signage.
-    roll_err = comm_roll_rate - gx;
-    pitch_err = comm_pitch_rate - (gy * -1);
-    yaw_err = comm_yaw_rate - (gz * -1);
+    roll_err = des_roll - gx;
+    pitch_err = des_pitch - (gy * -1);
+    yaw_err = des_yaw - (gz * -1);
 
     // Put error through PID for each axis
-    roll_err_int += (roll_prev_err + roll_err) * (.004 / 2.0);     // Trapazoidal integral estimation
-    pitch_err_int += (pitch_prev_err + pitch_err) * (.004 / 2.0);  // ^
-    yaw_err_int += (yaw_prev_err + yaw_err) * (.004 / 2.0);        // ^
+    roll_err_int += (roll_prev_err + roll_err) * (LOOP_TIME / 2.0);     // Trapazoidal integral estimation
+    pitch_err_int += (pitch_prev_err + pitch_err) * (LOOP_TIME / 2.0);  // ^
+    yaw_err_int += (yaw_prev_err + yaw_err) * (LOOP_TIME / 2.0);        // ^
     
-    roll_err_deriv = (roll_err - roll_prev_err) / .004;            // Finite difference derivative estimation
-    pitch_err_deriv = (pitch_err - pitch_prev_err) / .004;         // ^
-    yaw_err_deriv = (yaw_err - yaw_prev_err) / .004;               // ^
+    roll_err_deriv = (roll_err - roll_prev_err) / LOOP_TIME;            // Finite difference derivative estimation
+    pitch_err_deriv = (pitch_err - pitch_prev_err) / LOOP_TIME;         // ^
+    yaw_err_deriv = (yaw_err - yaw_prev_err) / LOOP_TIME;               // ^
 
     roll_prev_err = roll_err;                                      // Done with previous errors, updating them.
     pitch_prev_err = pitch_err;                                    // ^
@@ -322,10 +365,10 @@ void loop(void) {
   unsigned long end_time = millis();
   unsigned long elapsed = end_time - st_time;
 
-  if (elapsed > 4){
+  if (elapsed > (int)(LOOP_TIME * 1000)){
     Serial.println("ERROR LOOP TOOK TOO LONG!!!");
     modeTimer.update(10000);
   }else{
-    delay(4 - elapsed); // System will run @ 250Hz or 4ms.
+    delay((int)(LOOP_TIME * 1000) - elapsed); // System will run @ 500Hz or 4ms.
   }
 }
