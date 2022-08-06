@@ -272,13 +272,13 @@ void loop(void) {
   {
     // Get stick positions.
     throttle = map(sbus_data[THROTTLE_CH-1], MIN_CH_VAL, MAX_CH_VAL, MIN_MOTOR_MS_VAL, MAX_MOTOR_MS_VAL);
-    des_pitch = map((float)sbus_data[PITCH_CH-1], (float)MIN_CH_VAL, (float)MAX_CH_VAL, -35.0, 35.0);        // Input can be in degrees or degrees/sec depending on what flight mode we are in!!!!
-    des_roll = map((float)sbus_data[ROLL_CH-1], (float)MIN_CH_VAL, (float)MAX_CH_VAL, -35.0, 35.0);          // ^
+    des_roll = map((float)sbus_data[ROLL_CH-1], (float)MIN_CH_VAL, (float)MAX_CH_VAL, -35.0, 35.0);          // Input can be in degrees or degrees/sec depending on what flight mode we are in!!!!
+    des_pitch = map((float)sbus_data[PITCH_CH-1], (float)MIN_CH_VAL, (float)MAX_CH_VAL, -35.0, 35.0);        // ^
     des_yaw = map((float)sbus_data[YAW_CH-1], (float)MIN_CH_VAL, (float)MAX_CH_VAL, -35.0, 35.0);            // ^
 
     // Deadband controller inputs so we can actually command 0.
-    if ((des_pitch < .9) && (des_pitch > -0.9)) des_pitch = 0;
     if ((des_roll < .9) && (des_roll > -0.9)) des_roll = 0;
+    if ((des_pitch < .9) && (des_pitch > -0.9)) des_pitch = 0;
     if ((des_yaw < .9) && (des_yaw > -0.9)) des_yaw = 0;
 
     // No matter what mode we are in, we will command out of the rate loop.
