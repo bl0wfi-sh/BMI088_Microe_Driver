@@ -5,6 +5,7 @@
 #include "Kalman.h"
 #include "Complimentary.h"
 #include "PIDController.h"
+#include "MFController.h"
 
 //*********** Motor Parameters and Variables
 #define FLM   3
@@ -31,6 +32,44 @@ int throttle;
 float des_pitch;
 float des_roll;
 float des_yaw;
+float throttle_queue[10] = (0,0,0,0,0,0,0,0,0,0};
+float roll_queue[10] = (0,0,0,0,0,0,0,0,0,0};
+float pitch_queue[10] = (0,0,0,0,0,0,0,0,0,0};
+float yaw_queue[10] = (0,0,0,0,0,0,0,0,0,0};
+float* rolling_average_rc(float new_throttle, float new_roll, float new_pitch, float new_yaw)
+{
+  float results[4] = {new_throttle, new_roll, new_pitch, new_yaw}; // throttle, roll, pitch, yaw
+  
+  // Shift things up
+  for(int i = 9; i > 0; i--)
+  {
+    throttle_queue[i] = throttle_queue[i-1];
+    results[0] += throttle_queue[i];
+    
+    roll_queue[i] = roll_queue[i-1];
+    results[1] += roll_queue[i];
+    
+    pitch_queue[i] = pitch_queue[i-1];
+    results[2] += pitch_queue[i];
+    
+    yaw_queue[i] = yaw_queue[i-1];
+    results[3] += yaw_queue[i];
+  }
+
+  // Update rolling queue with new values.
+  throttle_queue[0] = new_throttle;
+  roll_queue[0] = new_roll;
+  pitch_queue[0] = new_pitch;
+  yaw_queue[0] = new_yaw;
+
+  // Finalize average and return array.
+  for(int i = 0; i < 4; i++)
+  {
+    results[i] /= 10.0;
+  }
+
+  return results;
+}
 
 //*********** Modes
 // 0 - Off mode. LED blinks slow.
@@ -98,15 +137,22 @@ void updateEstimators(){
 #define LOOP_TIME .002   // In seconds!
 #define MAX_RATE_COMMAND 400.0           // Max allowable rate command from attitude controller to rate controller. deg/s
 #define MIN_RATE_COMMAND -400.0          // Min allowable rate command from attitude controller to rate controller. deg/s
-std::array<float, 3> attitude_roll_gains =  {2.0, 0.0, 0.0};        // PID - Roll
-std::array<float, 3> attitude_pitch_gains = {2.0, 0.0, 0.0};        // PID - Pitch
+std::array<float, 3> attitude_roll_gains =  {2.4, 0.0, 0.0};        // PID - Roll
+std::array<float, 3> attitude_pitch_gains = {2.4, 0.0, 0.0};        // PID - Pitch
 std::array<float, 3> attitude_yaw_gains =   {1.2, 0.0, 0.0};        // PID - Yaw
 PIDControl attitude_controller(attitude_roll_gains, attitude_pitch_gains, attitude_yaw_gains);
 
-std::array<float, 3> rate_roll_gains =      {2.04, 0.0, 0.0005};    // PID - Roll
-std::array<float, 3> rate_pitch_gains =     {2.04, 0.0, 0.0005};    // PID - Pitch
+std::array<float, 3> rate_roll_gains =      {1.3, 0.01, 0.0005};    // PID - Roll
+std::array<float, 3> rate_pitch_gains =     {1.3, 0.01, 0.0005};    // PID - Pitch
 std::array<float, 3> rate_yaw_gains =       {3.0, 0.07, 0.0};       // PID - Yaw
 PIDControl rate_controller(rate_roll_gains, rate_pitch_gains, rate_yaw_gains);
+
+std::array<float, 4> roll_params =      {0.00001, 0.000, 1.0, 0.01};    // Intelligent PD Controller - Roll
+std::array<float, 4> pitch_params =     {0.00001, 0.000, 1.0, 0.01};    // Intelligent PD Controller - Pitch
+std::array<float, 4> yaw_params =       {0.00001, 0.000, 1.0, 0.01};    // Intelligent PD Controller - Yaw
+MFControl mf_controller(roll_params, pitch_params, yaw_params);
+
+float fl = 0, fr = 0, bl = 0, br = 0;
 
 //*********** Debug console!
 IntervalTimer logTimer;
@@ -116,7 +162,7 @@ void logToConsole(){
   Serial.println();
   **/
 
-  // Debug estimators.
+  /** Debug estimators.
   Serial.print(k_roll);
   Serial.print(", ");
   Serial.print(c_roll);
@@ -125,7 +171,16 @@ void logToConsole(){
   Serial.print(", ");
   Serial.print(c_pitch);
   Serial.print(", ");
-  Serial.println(veh_yaw);
+  Serial.print(veh_yaw);
+  Serial.print(", ");
+  **/
+  Serial.print(fl);
+  Serial.print(", ");
+  Serial.print(fr);
+  Serial.print(", ");
+  Serial.print(bl);
+  Serial.print(", ");
+  Serial.println(br);
 
   /** Debug Controllers
   Serial.print(des_roll);
@@ -223,8 +278,8 @@ void setup(void) {
   // Initialize the complimentary filter.
   c_roll_estimator.setAngle(acc_roll);    // Setting initial angle to accelerometer value.
   c_pitch_estimator.setAngle(acc_pitch);
-  c_roll_estimator.setTao(0.5);           // Setting low and high pass filter time constant.
-  c_pitch_estimator.setTao(0.5);
+  c_roll_estimator.setTao(0.45);           // Setting low and high pass filter time constant.
+  c_pitch_estimator.setTao(0.45);
 
   // Initialize the kalman filter.
   k_roll_estimator.setAngle(acc_roll);    // Setting initial angle to accelerometer value.
@@ -268,13 +323,20 @@ void loop(void) {
   }
 
   // Switch between flight modes. Check if armed.
-  if (armed == true && flight_mode != 0)
+  if (armed == true)
   {
     // Get stick positions.
     throttle = map(sbus_data[THROTTLE_CH-1], MIN_CH_VAL, MAX_CH_VAL, MIN_MOTOR_MS_VAL, MAX_MOTOR_MS_VAL);
-    des_roll = map((float)sbus_data[ROLL_CH-1], (float)MIN_CH_VAL, (float)MAX_CH_VAL, -35.0, 35.0);          // Input can be in degrees or degrees/sec depending on what flight mode we are in!!!!
-    des_pitch = map((float)sbus_data[PITCH_CH-1], (float)MIN_CH_VAL, (float)MAX_CH_VAL, -35.0, 35.0);        // ^
-    des_yaw = map((float)sbus_data[YAW_CH-1], (float)MIN_CH_VAL, (float)MAX_CH_VAL, -35.0, 35.0);            // ^
+    des_roll = map((float)sbus_data[ROLL_CH-1], (float)MIN_CH_VAL, (float)MAX_CH_VAL, -30.0, 30.0);          // Input can be in degrees or degrees/sec depending on what flight mode we are in!!!!
+    des_pitch = map((float)sbus_data[PITCH_CH-1], (float)MIN_CH_VAL, (float)MAX_CH_VAL, -30.0, 30.0);        // ^
+    des_yaw = map((float)sbus_data[YAW_CH-1], (float)MIN_CH_VAL, (float)MAX_CH_VAL, -30.0, 30.0);            // ^
+
+    // 10 point rolling average on RC inputs. Will cause command lag, but also filter out high frequency noise.
+    float *avg_rc_inputs = rolling_average_rc(throttle, des_roll, des_pitch, des_yaw);
+    throttle = avg_rc_inputs[0];
+    des_roll = avg_rc_inputs[1];
+    des_pitch = avg_rc_inputs[2];
+    des_yaw = avg_rc_inputs[3];
 
     // Deadband controller inputs so we can actually command 0.
     if ((des_roll < .9) && (des_roll > -0.9)) des_roll = 0;
@@ -311,23 +373,29 @@ void loop(void) {
       std::array<float, 3> rate_states = {gx, -gy, -gz};
       std::array<float, 3> desired_rates = {des_roll, des_pitch, des_yaw};
       rate_loop_outputs = rate_controller.loopController(rate_states, desired_rates, LOOP_TIME);
+      
+    }else if (flight_mode == 0)  // MODEL FREE MODE!!!
+    {
+      std::array<float, 6> vehicle_state = {gx, -gy, -gz, c_roll, c_pitch, veh_yaw};
+      std::array<float, 3> desired_state = {des_roll, des_pitch, des_yaw};
+      rate_loop_outputs = mf_controller.loopController(vehicle_state, desired_state, LOOP_TIME);
     }
 
     // Rate loop outputs get mixed to individual motors.
     // Saturating commanded PWM values to safe limits.
-    float fl = throttle + rate_loop_outputs[0] + rate_loop_outputs[1] - rate_loop_outputs[2];
+    fl = throttle + rate_loop_outputs[0] + rate_loop_outputs[1] - rate_loop_outputs[2];
     if (fl > MAX_MOTOR_MS_VAL) fl = MAX_MOTOR_MS_VAL;
     if (fl < MIN_MOTOR_MS_VAL) fl = MIN_MOTOR_MS_VAL;
 
-    float fr = throttle - rate_loop_outputs[0] + rate_loop_outputs[1] + rate_loop_outputs[2];
+    fr = throttle - rate_loop_outputs[0] + rate_loop_outputs[1] + rate_loop_outputs[2];
     if (fr > MAX_MOTOR_MS_VAL) fr = MAX_MOTOR_MS_VAL;
     if (fr < MIN_MOTOR_MS_VAL) fr = MIN_MOTOR_MS_VAL;
 
-    float bl = throttle + rate_loop_outputs[0] - rate_loop_outputs[1] + rate_loop_outputs[2];
+    bl = throttle + rate_loop_outputs[0] - rate_loop_outputs[1] + rate_loop_outputs[2];
     if (bl > MAX_MOTOR_MS_VAL) bl = MAX_MOTOR_MS_VAL;
     if (bl < MIN_MOTOR_MS_VAL) bl = MIN_MOTOR_MS_VAL;
 
-    float br = throttle - rate_loop_outputs[0] - rate_loop_outputs[1] - rate_loop_outputs[2];
+    br = throttle - rate_loop_outputs[0] - rate_loop_outputs[1] - rate_loop_outputs[2];
     if (br > MAX_MOTOR_MS_VAL) br = MAX_MOTOR_MS_VAL;
     if (br < MIN_MOTOR_MS_VAL) br = MIN_MOTOR_MS_VAL;
 
