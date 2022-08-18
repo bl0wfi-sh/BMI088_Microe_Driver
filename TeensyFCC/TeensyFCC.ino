@@ -106,7 +106,7 @@ float k_roll = 0, k_pitch = 0;
 Complimentary c_roll_estimator;
 Complimentary c_pitch_estimator;
 float c_roll = 0, c_pitch = 0;
-
+#define ESTIMATION_TIME   .002          // In seconds!
 IntervalTimer stateEstimator;           // Estimator will run @ 800Hz.
 void updateEstimators(){
   // Read accelerometer
@@ -115,7 +115,7 @@ void updateEstimators(){
   bmi088.getGyroscope(&gx, &gy, &gz);     // deg/s
 
   // Estimation of yaw. I don't know any other way to do this with the current sensors.
-  veh_yaw += (-gz * .00125);
+  veh_yaw += (-gz * ESTIMATION_TIME);
 
   // Estimating roll and pitch angle based on accelerometer.
   float acc_tot_vect = sqrt((ax*ax) + (ay*ay) + (az*az));
@@ -123,18 +123,18 @@ void updateEstimators(){
   float acc_pitch = asin(ax/acc_tot_vect) * (180.0 /3.142);
 
   // Lets use the complimentary filter to estimate roll and pitch.
-  c_roll = c_roll_estimator.updateAngle(acc_roll, gx, .00125);
-  c_pitch = c_pitch_estimator.updateAngle(acc_pitch, -gy, .00125);
-  //gyro_roll += gyro_pitch * sin(-gz * .00125 * 3.142 / 180.0);
-  //gyro_pitch -= gyro_roll * sin(-gz * .00125 * 3.142 / 180.0);
+  c_roll = c_roll_estimator.updateAngle(acc_roll, gx, ESTIMATION_TIME);
+  c_pitch = c_pitch_estimator.updateAngle(acc_pitch, -gy, ESTIMATION_TIME);
+  //gyro_roll += gyro_pitch * sin(-gz * ESTIMATION_TIME * 3.142 / 180.0);
+  //gyro_pitch -= gyro_roll * sin(-gz * ESTIMATION_TIME * 3.142 / 180.0);
     
   // Lets use the kalman filter to estimate roll and pitch.
-  k_roll = k_roll_estimator.getAngle(acc_roll, gx, .00125);
-  k_pitch = k_pitch_estimator.getAngle(acc_pitch, -gy, .00125);
+  k_roll = k_roll_estimator.getAngle(acc_roll, gx, ESTIMATION_TIME);
+  k_pitch = k_pitch_estimator.getAngle(acc_pitch, -gy, ESTIMATION_TIME);
 }
 
 //*********** Vehicle Control Algorithms
-#define LOOP_TIME .002   // In seconds!
+#define LOOP_TIME .0025   // In seconds!
 #define MAX_RATE_COMMAND 400.0           // Max allowable rate command from attitude controller to rate controller. deg/s
 #define MIN_RATE_COMMAND -400.0          // Min allowable rate command from attitude controller to rate controller. deg/s
 std::array<float, 3> attitude_roll_gains =  {2.4, 0.0, 0.0};        // PID - Roll
@@ -155,6 +155,7 @@ MFControl mf_controller(roll_params, pitch_params, yaw_params);
 float fl = 0, fr = 0, bl = 0, br = 0;
 
 //*********** Debug console!
+#define LOGGER_TIME .01   // In seconds!
 IntervalTimer logTimer;
 void logToConsole(){
   /** Throttle debugging    // Logger timer callback function.
@@ -224,7 +225,7 @@ void setup(void) {
   // When USB is not connected not having this running will help save cycles.
   if (Serial)
   {
-    logTimer.begin(logToConsole, 10000);      // Logging @ 100Hz
+    logTimer.begin(logToConsole, (int)(LOGGER_TIME *1000000));      // Logging @ 100Hz
   }
     
   // Setup sbus receiver.
@@ -286,7 +287,7 @@ void setup(void) {
   k_pitch_estimator.setAngle(acc_pitch);
 
   // Start estimator in the background.
-  stateEstimator.begin(updateEstimators,1250);
+  stateEstimator.begin(updateEstimators, (int)(ESTIMATION_TIME * 1000000));
 }
 
 void loop(void) {
@@ -421,6 +422,6 @@ void loop(void) {
     Serial.println("ERROR LOOP TOOK TOO LONG!!!");
     modeTimer.update(10000);
   }else{
-    delay((int)(LOOP_TIME * 1000) - elapsed); // System will run @ 500Hz or 4ms.
+    delay((int)(LOOP_TIME * 1000) - elapsed); // System will run @ 400Hz or 2.5ms.
   }
 }
